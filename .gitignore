@@ -16,3 +16,11 @@ backend/app/data/
 
 # macOS specific files
 .DS_Store
+
+# Node dependencies
+node_modules/
+frontend/node_modules/
+
+# Local environment variables
+frontend/.env
+frontend/.env.local

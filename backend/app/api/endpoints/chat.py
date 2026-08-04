@@ -8,19 +8,18 @@ from pydantic import BaseModel
 from app.config import settings
 from app.api.deps import get_current_user
 from app.db.chromadb_client import vector_db
+from app.core.embedder import embedder  # Import our local embedder safely
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-# Request / Response Schemas
 class ChatRequest(BaseModel):
     message: str
-    document_id: Optional[str] = None  # Optionally isolate chat to one document
+    document_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     answer: str
     sources: List[Dict[str, Any]]
 
-# File-based helper functions to maintain strict No-SQL architecture
 def get_history_file_path(user_id: str) -> str:
     user_dir = os.path.join(settings.UPLOADS_DIR, user_id)
     os.makedirs(user_dir, exist_ok=True)
@@ -57,7 +56,7 @@ def append_to_chat_history(user_id: str, user_msg: str, bot_response: str, docum
     
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(history, f, indent=2, ensure_fallback=True)
+            json.dump(history, f, indent=2)
     except Exception as e:
         print(f"Warning: Failed to persist chat history: {e}")
 
@@ -67,14 +66,20 @@ async def generate_rag_answer(
     user_id: str = Depends(get_current_user)
 ):
     """
-    Executes a semantic search over vector storage, forms a context prompt,
-    polls Ollama for local LLM inference, and tracks the history log.
+    Executes similarity search on the VM, prompts local Qwen 2.5,
+    and returns contextualized answer.
     """
+    chunks = []
+    sources = []
+
     # 1. Retrieve Context from ChromaDB
     try:
         query_text = payload.message
         
-        # Build dynamic query metadata filter
+        # Generate embedding vector using our SentenceTransformer
+        query_vector = embedder.embed_query(query_text)
+        
+        # Build strict dynamic metadata filter
         where_filter = {"user_id": user_id}
         if payload.document_id:
             where_filter = {
@@ -84,24 +89,16 @@ async def generate_rag_answer(
                 ]
             }
 
-        # Query vector manager (resolving matching vector embeddings)
-        # We manually query the client collection here to support dynamic nested AND filters
-        query_embedding = vector_db.collection.query(
-            query_embeddings=[vector_db.client.get_or_create_collection("research_assistant_rag")._embedding_function(query_text)] 
-            if hasattr(vector_db.collection, "_embedding_function") else None,
-            # Fallback to manual embedder evaluation
-            query_embeddings_fallback=[vector_db.client.get_or_create_collection("research_assistant_rag")._embedding_function(query_text)] 
-            if not hasattr(vector_db, "search_similar_chunks") else None,
+        # Query ChromaDB using the pre-computed embedding vector
+        query_results = vector_db.collection.query(
+            query_embeddings=[query_vector],
             n_results=5,
             where=where_filter
         )
-        
-        # Format the retrieved chunks
-        chunks = []
-        sources = []
-        if query_embedding and query_embedding.get("documents") and query_embedding["documents"][0]:
-            docs = query_embedding["documents"][0]
-            metas = query_embedding["metadatas"][0]
+
+        if query_results and query_results.get("documents") and query_results["documents"][0]:
+            docs = query_results["documents"][0]
+            metas = query_results["metadatas"][0]
             for idx, doc in enumerate(docs):
                 chunks.append(doc)
                 sources.append({
@@ -109,27 +106,14 @@ async def generate_rag_answer(
                     "filename": metas[idx].get("filename"),
                     "page_number": metas[idx].get("page_number")
                 })
-        else:
-            # Try via wrapper if manual generation fails
-            retrieved = vector_db.search_similar_chunks(query_text, user_id=user_id, top_k=5)
-            for item in retrieved:
-                # If document filter was specified, skip non-matching documents
-                if payload.document_id and item["metadata"].get("document_id") != payload.document_id:
-                    continue
-                chunks.append(item["text"])
-                sources.append({
-                    "text": item["text"],
-                    "filename": item["metadata"].get("filename"),
-                    "page_number": item["metadata"].get("page_number")
-                })
                 
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving matching knowledge chunks: {str(e)}"
+            detail=f"Error performing vector similarity search: {str(e)}"
         )
 
-    # 2. Build strict RAG Prompt Context
+    # 2. Build strict prompt context
     context_block = "\n---\n".join(chunks) if chunks else "No context found."
     
     system_prompt = (
@@ -153,7 +137,7 @@ async def generate_rag_answer(
                     "prompt": system_prompt,
                     "stream": False,
                     "options": {
-                        "temperature": 0.0  # Set to 0 to keep factual precision high
+                        "temperature": 0.0  # Factual precision
                     }
                 }
             )
@@ -187,7 +171,4 @@ async def generate_rag_answer(
 
 @router.get("/history", response_model=List[Dict[str, Any]])
 async def get_chat_history(user_id: str = Depends(get_current_user)):
-    """
-    Returns the complete message thread history log for the current authenticated tenant.
-    """
     return read_chat_history(user_id)
