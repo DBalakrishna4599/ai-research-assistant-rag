@@ -2,6 +2,8 @@
 
 ### RAG-Based Private Document Intelligence Platform
 
+DEMO : https://www.airesearchassist.tech
+
 A production-oriented, self-hosted **AI Research Assistant** that allows users to securely upload PDF documents, search their private document library, and ask context-aware questions using **Retrieval-Augmented Generation (RAG)**.
 
 The system combines:
