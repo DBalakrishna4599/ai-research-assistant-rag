@@ -128,7 +128,7 @@ async def generate_rag_answer(
 
     # 3. Call local Ollama Endpoint
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with httpx.AsyncClient(timeout=240.0) as client:
             ollama_url = f"{settings.OLLAMA_BASE_URL}/api/generate"
             response = await client.post(
                 ollama_url,
@@ -137,7 +137,9 @@ async def generate_rag_answer(
                     "prompt": system_prompt,
                     "stream": False,
                     "options": {
-                        "temperature": 0.0  # Factual precision
+                        "temperature": 0.0,  # Factual precision
+                        "num_ctx": 2048,
+                        "num_predict": 300
                     }
                 }
             )
