@@ -37,7 +37,7 @@ export default function Navbar() {
       {/* User Actions */}
       <div className="flex items-center space-x-4">
         <a 
-          href="https://github.com/DBalakrishna4599/ai-research-assistant-rag" 
+          href="https://github.com/DBalakrishna4599" 
           target="_blank" 
           rel="noreferrer" 
           className="text-zinc-500 hover:text-white transition-all p-1.5 rounded-lg hover:bg-[#111218]/50"
